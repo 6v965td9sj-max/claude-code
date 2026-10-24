@@ -1,0 +1,16 @@
+{
+  "name": "Rezeptkartei",
+  "short_name": "Rezepte",
+  "description": "Rezepte einfügen, automatisch auf A5-Karten setzen und zu zweit auf A4 drucken.",
+  "lang": "de",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f6f2ea",
+  "theme_color": "#f6f2ea",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
