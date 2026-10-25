@@ -1,5 +1,5 @@
 import { db, newId } from './db.js';
-import { LAYOUT, loadFonts, cardPdf, sheetsPdf, duplexTestPdf, pageCount, planSheets, fitRecipe, newDoc } from './layout.js';
+import { LAYOUT, FIELDS, loadFonts, cardPdf, sheetsPdf, duplexTestPdf, pageCount, planSheets, fitRecipe, newDoc, metaItems } from './layout.js';
 import { parseRecipe } from './parser.js';
 import { importPdf, renderPdf } from './pdfimport.js';
 
@@ -10,7 +10,7 @@ const state = {
   tags: new Set(),
   onlyUnprinted: false,
   selected: null, // Auswahl in der Druckansicht
-  settings: { swapBack: true, rotateBack: false, cutMarks: true },
+  settings: { swapSlots: false, rotateBack: false, cutMarks: true },
 };
 
 // ---------------------------------------------------------------------------
@@ -79,8 +79,12 @@ function matches(r) {
   if (state.onlyUnprinted && r.printedAt) return false;
   for (const t of state.tags) if (!(r.tags || []).includes(t)) return false;
   if (!state.query.trim()) return true;
-  const hay = fold([r.title, r.info, r.ingredients, r.steps, r.notes, ...(r.tags || [])].join('\n'));
+  const hay = fold([...FIELDS.filter((k) => k !== 'tags').map((k) => r[k]), ...(r.tags || [])].join('\n'));
   return fold(state.query).split(/\s+/).filter(Boolean).every((w) => hay.includes(w));
+}
+
+function blankRecipe() {
+  return { ...Object.fromEntries(FIELDS.map((k) => [k, ''])), tags: [] };
 }
 
 const byTitle = (a, b) => (a.title || '').localeCompare(b.title || '', 'de');
@@ -135,7 +139,7 @@ function renderList() {
         h('li', { onclick: () => (location.hash = `#/edit/${r.id}`) },
           h('div', { class: 'main' },
             h('div', { class: 't' }, r.title || 'Ohne Titel'),
-            h('div', { class: 'sub' }, [r.info, (r.tags || []).join(', ')].filter(Boolean).join(' — ') || '\u00a0'),
+            h('div', { class: 'sub' }, [r.description || metaItems(r)[0], (r.tags || []).join(', ')].filter(Boolean).join(' — ') || '\u00a0'),
           ),
           r.needsReview ? h('span', { class: 'badge warn' }, 'prüfen') : null,
           pagesBadge(r),
@@ -180,7 +184,7 @@ function renderList() {
 async function renderEditor(id) {
   let r = id === 'new' ? null : state.recipes.find((x) => x.id === id) || (await db.get(id));
   const isNew = !r;
-  r = r ? { ...r } : { id: newId(), title: '', info: '', ingredients: '', steps: '', notes: '', tags: [], createdAt: Date.now() };
+  r = r ? { ...r } : { ...blankRecipe(), id: newId(), createdAt: Date.now() };
   let saved = !isNew;
   let lastPdf = null;
 
@@ -198,7 +202,7 @@ async function renderEditor(id) {
     if (laid.overflow) parts.push('Zu lang für eine Karte – bitte kürzen');
     status.textContent = parts.join(' · ');
     status.classList.toggle('warn', !!laid.overflow);
-    await renderPdf(pagesEl, buf, { maxWidth: Math.min(preview.clientWidth || 400, 420) || 360 });
+    await renderPdf(pagesEl, buf, { maxWidth: Math.min(preview.clientWidth || 400, 520) || 360 });
   }, 350);
 
   const persist = debounce(async () => {
@@ -223,9 +227,14 @@ async function renderEditor(id) {
 
   const inputs = {
     title: h('input', { type: 'text', class: 'title-input', placeholder: 'Titel', autocapitalize: 'sentences' }),
-    info: h('input', { type: 'text', placeholder: 'z. B. 4 Portionen · 45 Min.' }),
+    description: h('input', { type: 'text', placeholder: 'Kurze Beschreibung (optional)' }),
+    totalTime: h('input', { type: 'text', placeholder: 'ca. 30 Minuten' }),
+    workTime: h('input', { type: 'text', placeholder: 'ca. 15 Minuten' }),
+    cookTime: h('input', { type: 'text', placeholder: 'ca. 15 Minuten' }),
+    servings: h('input', { type: 'text', inputmode: 'numeric', placeholder: '4' }),
+    difficulty: h('input', { type: 'text', list: 'difficulties', placeholder: 'simpel' }),
     ingredients: h('textarea', { rows: 8, placeholder: '200 g Mehl\n2 Eier\n1 Prise Salz\nFür die Soße:\n400 ml Sahne' }),
-    steps: h('textarea', { rows: 10, placeholder: 'Ein Arbeitsschritt pro Zeile.' }),
+    steps: h('textarea', { rows: 10, placeholder: 'Ein Absatz pro Zeile.' }),
     notes: h('textarea', { rows: 3, placeholder: 'Optional' }),
   };
 
@@ -256,7 +265,7 @@ async function renderEditor(id) {
   drawTags();
 
   const fillFrom = (parsed) => {
-    for (const k of ['title', 'info', 'ingredients', 'steps', 'notes']) {
+    for (const k of Object.keys(inputs)) {
       r[k] = parsed[k] || '';
       inputs[k].value = r[k];
     }
@@ -288,9 +297,17 @@ async function renderEditor(id) {
   const form = h('div', { class: 'form' },
     h('div', { class: 'row', style: 'margin-bottom:14px' }, pasteBtn, h('span', { class: 'spacer' }), original),
     field('title', 'Titel', inputs.title),
-    field('info', 'Info', inputs.info),
+    field('description', 'Beschreibung', inputs.description),
+    h('div', { class: 'meta-grid' },
+      field('totalTime', 'Gesamtzeit', inputs.totalTime),
+      field('workTime', 'Arbeitszeit', inputs.workTime),
+      field('cookTime', 'Koch-/Backzeit', inputs.cookTime),
+      field('servings', 'Portionen', inputs.servings),
+      field('difficulty', 'Schwierigkeit', inputs.difficulty),
+      h('datalist', { id: 'difficulties' }, ...['simpel', 'normal', 'pfiffig'].map((v) => h('option', { value: v }))),
+    ),
     field('ingredients', 'Zutaten', inputs.ingredients),
-    field('steps', 'Zubereitung', inputs.steps),
+    field('steps', 'Anleitung', inputs.steps),
     field('notes', 'Tipps', inputs.notes),
     h('label', { class: 'field' }, h('span', {}, 'Stichwörter'), tagChips, tagInput),
     !isNew
@@ -358,7 +375,7 @@ function askPaste() {
 }
 
 // ---------------------------------------------------------------------------
-// Drucken (2 × A5 auf A4)
+// Drucken (2 Karten auf A4)
 
 function renderPrint() {
   if (!state.selected) state.selected = new Set(state.recipes.filter((r) => !r.printedAt).map((r) => r.id));
@@ -440,7 +457,7 @@ function renderPrint() {
 
   app.replaceChildren(
     header('Drucken', { back: '#/' }),
-    h('p', { class: 'hint' }, 'Je zwei A5-Karten kommen auf ein A4-Blatt (quer). Lange Rezepte bekommen automatisch eine Rückseite.'),
+    h('p', { class: 'hint' }, 'Je zwei A5-Karten kommen übereinander auf ein A4-Blatt. Lange Rezepte bekommen automatisch eine Rückseite.'),
     h('div', { class: 'chips' },
       h('button', { class: 'chip', onclick: () => { state.recipes.forEach((r) => sel.add(r.id)); fill(); } }, 'Alle'),
       h('button', { class: 'chip', onclick: () => { sel.clear(); fill(); } }, 'Keine'),
@@ -471,8 +488,9 @@ async function importFiles(files) {
         const existing = f._embedded && state.recipes.find((x) => x.title === f.title && x.ingredients === f.ingredients);
         if (existing) continue;
         const r = {
-          id: newId(), title: f.title || file.name.replace(/\.pdf$/i, ''), info: f.info || '',
-          ingredients: f.ingredients || '', steps: f.steps || '', notes: f.notes || '', tags: f.tags || [],
+          ...blankRecipe(),
+          ...Object.fromEntries(FIELDS.filter((k) => f[k]).map((k) => [k, f[k]])),
+          id: newId(), title: f.title || file.name.replace(/\.pdf$/i, ''),
           createdAt: Date.now(), originalFileId: fileId, needsReview: !f._embedded,
         };
         await save(r);
@@ -564,7 +582,7 @@ function renderSettings() {
     ),
     h('section', { class: 'box' },
       h('h2', {}, 'Doppelseitiger Druck'),
-      toggle('swapBack', 'Rückseiten links/rechts tauschen', 'Richtig für „an der kurzen Kante wenden“ (Standard)'),
+      toggle('swapSlots', 'Rückseiten oben/unten tauschen', 'Aus = Wenden an der langen Kante (Standard beim iPhone)'),
       toggle('rotateBack', 'Rückseiten um 180° drehen', 'Einschalten, falls die Rückseiten auf dem Kopf stehen'),
       toggle('cutMarks', 'Schnittmarken', 'Kleine Striche oben und unten in der Mitte'),
       h('div', { class: 'row', style: 'margin-top:8px' },
@@ -579,7 +597,7 @@ function renderSettings() {
     ),
     h('section', { class: 'box' },
       h('h2', {}, 'Layout'),
-      h('p', { class: 'hint', style: 'margin:0' }, `${LAYOUT.name} · DIN A5 (${LAYOUT.page.width} × ${LAYOUT.page.height} mm)`),
+      h('p', { class: 'hint', style: 'margin:0' }, `${LAYOUT.name} · DIN A5 quer (${LAYOUT.page.width} × ${String(LAYOUT.page.height).replace('.', ',')} mm), zwei Karten übereinander auf A4`),
     ),
   );
 }
@@ -601,7 +619,10 @@ async function init() {
   state.recipes = await db.all();
   Object.assign(state.settings, (await db.getSetting('print')) || {});
   // Seitenzahl für ältere Einträge nachtragen
-  for (const r of state.recipes) if (!r.pages) Object.assign(r, pageCount(r));
+  for (const r of state.recipes) {
+    if (r.info && !r.description) r.description = r.info; // ältere Einträge
+    if (!r.pages) Object.assign(r, pageCount(r));
+  }
   window.addEventListener('hashchange', route);
   route();
   navigator.storage?.persist?.();

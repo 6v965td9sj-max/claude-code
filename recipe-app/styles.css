@@ -112,7 +112,7 @@ input.title-input { font: 600 22px/1.25 Georgia, "Times New Roman", serif; }
 .editor.show-preview .preview { display: block; }
 @media (min-width: 860px) {
   .seg { display: none; }
-  .editor { grid-template-columns: 1fr 420px; align-items: start; }
+  .editor { grid-template-columns: 1fr 520px; align-items: start; }
   .editor .form, .editor.show-preview .form { display: block; }
   .editor .preview { display: block; position: sticky; top: 80px; }
 }
@@ -142,3 +142,7 @@ dialog textarea { margin-bottom: 12px; }
   opacity: 0; pointer-events: none; transition: .25s; max-width: calc(100vw - 32px); z-index: 20;
 }
 #toast.show { opacity: .95; transform: translateX(-50%); }
+
+.meta-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 10px; }
+.meta-grid label.field > span { font-size: 11px; }
+@media (min-width: 600px) { .meta-grid { grid-template-columns: repeat(5, 1fr); } }

@@ -1,63 +1,74 @@
-// Kartenlayout (DIN A5) und Druckbogen (2 × A5 auf DIN A4 quer).
+// Kartenlayout "Kochkartei" (DIN A5 quer) und Druckbogen (2 × A5 übereinander
+// auf DIN A4 hochkant).
 //
-// Alles, was das Aussehen der Karte bestimmt, steht in LAYOUT. Wenn euer
-// eigenes Papier-Layout (InDesign) übernommen wird, werden hier Maße,
-// Schriften, Größen und Farben angepasst – der Rest der App bleibt gleich.
+// Alle Maße stammen aus der InDesign-Vorlage (Kochkartei.pdf) und stehen in
+// LAYOUT – Positionen in mm ab der linken oberen Ecke der Karte, y-Werte sind
+// Grundlinien. Schrift ist Arial; im PDF wird Helvetica verwendet, die
+// dieselben Zeichenbreiten hat.
 
 const { jsPDF } = window.jspdf;
 
 const PT = 25.4 / 72; // mm pro Punkt
 
 export const LAYOUT = {
-  name: 'Minimal (Platzhalter)',
-  page: { width: 148, height: 210 }, // mm, DIN A5 hochkant
-  margin: { top: 15, right: 14, bottom: 12, left: 14 }, // mm, ≥ 5 mm wegen Druckrand
+  name: 'Kochkartei',
+  page: { width: 210, height: 148.5 }, // DIN A5 quer
+  sheet: { format: 'a4', orientation: 'portrait', slots: [[0, 0], [0, 148.5]] }, // oben, unten
+  left: 8,
+  right: 202,
   fonts: {
-    title: ['times', 'bold'],
-    info: ['helvetica', 'normal'],
-    heading: ['helvetica', 'bold'],
-    body: ['helvetica', 'normal'],
-    amount: ['helvetica', 'bold'],
-    group: ['helvetica', 'bold'],
-    note: ['helvetica', 'italic'],
-    footer: ['helvetica', 'normal'],
+    regular: ['helvetica', 'normal'],
+    bold: ['helvetica', 'bold'],
   },
-  size: { title: 22, info: 8.5, heading: 8, body: 9.5, group: 8.5, note: 8.5, footer: 6.5, stepNo: 9.5 }, // pt
-  lineHeight: 1.38,
-  headingCharSpace: 0.45, // mm Sperrung der Überschriften
-  color: {
-    text: [28, 28, 28],
-    muted: [120, 120, 120],
-    accent: [150, 110, 70],
-    rule: [190, 190, 190],
-  },
+  color: { text: [0, 0, 0], muted: [145, 143, 143] },
+  title: { size: 16, minSize: 11, baseline: 12.11, charSpace: 0.62, uppercase: true },
+  description: { size: 8, baseline: 18.4, maxLines: 2 },
+  meta: { size: 8, baseline: 25.45, slots: [8, 46.1, 84.2, 135, 160.4], gap: 3 },
+  rule: { y: 26.5, width: 0.18 },
+  divider: { x: 105, top: 32, bottom: 89.45, width: 0.18 },
+  columns: [
+    { x: 8, width: 92 },
+    { x: 110, width: 92 },
+  ],
+  headingBaseline: 34.06,
+  body: { size: 8, leading: 12, charSpace: 0.004 }, // pt; Laufweite in mm
+  headingCharSpace: 0.1, // mm
+  headingGap: 6.4, // mm von der Überschrift bis zur ersten Textzeile
+  sectionGap: 4.23, // mm Abstand vor einer weiteren Überschrift in derselben Spalte
+  groupGap: 1.5, // mm vor Zwischenüberschriften in den Zutaten ("Für den Teig")
+  paragraphGap: 0, // mm zwischen Arbeitsschritten (Vorlage: keiner)
+  bottomBaseline: 140.5, // letzte mögliche Grundlinie
+  footer: { size: 6, baseline: 144.5 },
   labels: {
     ingredients: 'ZUTATEN',
-    steps: 'ZUBEREITUNG',
+    steps: 'ANLEITUNG',
     notes: 'TIPPS',
+    cont: ' (FORTSETZUNG)',
     continued: 'Fortsetzung auf der Rückseite',
-    backHeader: 'Fortsetzung',
+    back: 'Fortsetzung',
+    totalTime: 'Gesamtzeit',
+    workTime: 'Arbeitszeit',
+    cookTime: 'Koch-/Backzeit',
+    servings: 'Portionen',
+    difficulty: 'Schwierigkeitsgrad',
   },
-  ingredientColumns: 'auto', // 1, 2 oder 'auto'
-  stepNumbers: true,
-  footerHeight: 6, // mm
-  // Eigene Schriften (TTF) für später, z. B.:
-  // customFonts: [{ name: 'Lora', style: 'bold', url: 'fonts/Lora-Bold.ttf' }],
+  // Eigene Schriften (TTF) – z. B. echtes Arial:
+  // customFonts: [{ name: 'Arial', style: 'normal', url: 'fonts/arial.ttf' }, …]
+  // und oben bei fonts eintragen: regular: ['Arial', 'normal'] …
   customFonts: [],
 };
 
 // ---------------------------------------------------------------------------
 // Schriften & Text
 
-let fontData = null; // geladene customFonts als [{name, style, file, base64}]
+let fontData = null;
 
 export async function loadFonts() {
   if (fontData || !LAYOUT.customFonts.length) return;
   fontData = await Promise.all(
     LAYOUT.customFonts.map(async (f) => {
-      const buf = await (await fetch(f.url)).arrayBuffer();
+      const bytes = new Uint8Array(await (await fetch(f.url)).arrayBuffer());
       let bin = '';
-      const bytes = new Uint8Array(buf);
       for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
       return { ...f, file: f.url.split('/').pop(), base64: btoa(bin) };
     }),
@@ -82,11 +93,40 @@ const REPLACE = {
 };
 
 export function sanitize(str) {
-  if (fontData) return str;
+  if (fontData) return str || '';
   let out = '';
-  for (const ch of str.normalize('NFC')) {
+  for (const ch of (str || '').normalize('NFC')) {
     if (ch in REPLACE) out += REPLACE[ch];
     else if (ch.codePointAt(0) < 256 || WINANSI_EXTRA.includes(ch)) out += ch;
+  }
+  return out;
+}
+
+// Zeilenumbruch nach Wörtern; berücksichtigt die Laufweite (charSpace, mm).
+// Die aktuelle Schrift muss gesetzt sein.
+function wrap(doc, text, width, charSpace = 0) {
+  const w = (t) => doc.getTextWidth(t) + charSpace * t.length;
+  const lines = [];
+  let cur = '';
+  for (const word of text.split(/ +/)) {
+    const next = cur ? `${cur} ${word}` : word;
+    if (!cur || w(next) <= width) {
+      cur = next;
+      continue;
+    }
+    lines.push(cur);
+    cur = word;
+  }
+  // überlange Wörter hart umbrechen
+  const out = [];
+  for (let line of [...lines, cur]) {
+    while (w(line) > width && line.length > 1) {
+      let k = line.length - 1;
+      while (k > 1 && w(line.slice(0, k)) > width) k--;
+      out.push(line.slice(0, k));
+      line = line.slice(k);
+    }
+    out.push(line);
   }
   return out;
 }
@@ -97,252 +137,172 @@ function setFont(doc, key, size) {
   doc.setFontSize(size);
 }
 
-function lineH(sizePt) {
-  return sizePt * LAYOUT.lineHeight * PT;
-}
-
-function wrap(doc, text, width) {
-  return doc.splitTextToSize(text, width);
-}
-
 // ---------------------------------------------------------------------------
-// Rezepttext → Struktur
+// Rezeptdaten → Text
 
-const AMOUNT_RE = new RegExp(
-  '^((?:ca\\.?\\s*|etwa\\s*|je\\s*)?[\\d½¼¾⅓⅔⅛][\\d½¼¾⅓⅔⅛.,/\\-–\\s]*' +
-    '(?:\\s*(?:kg|g|mg|ml|cl|dl|l|EL|TL|el|tl|Msp\\.?|Prisen?|Pck\\.?|Päckchen|Packungen?|Pkg\\.?|Stk\\.?|Stück|Bund|Dosen?|Becher|Tassen?|Gläser|Glas|Scheiben?|Zehen?|Handvoll|Spritzer|Schuss|Zweige?|Blätter|Blatt|Würfel|Tropfen|cups?|tbsp|tsp|oz|lb)\\.?)?)' +
-    '(?=\\s)\\s+(.+)$',
-);
-
-export function parseIngredients(text) {
-  const items = [];
-  for (const raw of (text || '').split('\n')) {
-    const line = raw.trim();
-    if (!line) continue;
-    if (/:$/.test(line) || /^#+\s*/.test(line)) {
-      items.push({ group: line.replace(/^#+\s*/, '').replace(/:$/, '') });
-      continue;
-    }
-    const m = line.match(AMOUNT_RE);
-    if (m) items.push({ amount: m[1].trim().replace(/\s+/g, ' '), name: m[2].trim() });
-    else items.push({ amount: '', name: line });
-  }
-  return items;
-}
-
-export function parseSteps(text) {
+export function parseLines(text) {
   return (text || '')
     .split('\n')
     .map((s) => s.trim())
     .filter(Boolean);
 }
 
+const isGroup = (line) => /:$/.test(line) || /^#+\s*/.test(line);
+
+// Infozeile: "Gesamtzeit: ca. 30 Minuten   Arbeitszeit: …   4 Portionen   Schwierigkeitsgrad: simpel"
+export function metaItems(r) {
+  const L = LAYOUT.labels;
+  const time = (v) => (/^\d+$/.test(v) ? `${v} Minuten` : v);
+  const items = [];
+  if (r.totalTime) items.push(`${L.totalTime}: ${time(r.totalTime)}`);
+  if (r.workTime) items.push(`${L.workTime}: ${time(r.workTime)}`);
+  if (r.cookTime) items.push(`${L.cookTime}: ${time(r.cookTime)}`);
+  if (r.servings) items.push(/^\d+([.,]\d+)?$/.test(r.servings) ? `${r.servings} ${L.servings}` : r.servings);
+  if (r.difficulty) items.push(`${L.difficulty}: ${r.difficulty}`);
+  return items.map(sanitize);
+}
+
 // ---------------------------------------------------------------------------
-// Satz einer Karte
+// Satz
 
-// Ein "Unit" ist eine unteilbare Zeile/Block im Textfluss:
-// { h, before, keep (mit nächstem zusammenhalten), draw(p, y) }
+// Ein Unit ist eine Zeile im Spaltenfluss:
+// { h: Vorschub bis zur nächsten Grundlinie, before: Extra-Abstand davor,
+//   keep: mit der nächsten Zeile zusammenhalten, draw(p, x, baseline) }
 
-function buildUnits(doc, recipe, s) {
+function buildStreams(doc, r, s) {
   const L = LAYOUT;
-  const W = L.page.width - L.margin.left - L.margin.right;
-  const x0 = L.margin.left;
-  const units = [];
-  const sz = (k) => L.size[k] * s;
+  const width = L.columns[0].width;
+  const size = L.body.size * s;
+  const pitch = L.body.leading * PT * s;
+  const black = L.color.text;
 
-  const heading = (label) => {
-    const size = sz('heading');
-    const h = lineH(size) + 1.2 * s;
-    units.push({
-      h,
-      before: 5.5 * s,
-      keep: true,
-      draw(p, y) {
-        p.text(label, x0, y + lineH(size) * 0.78, 'heading', size, L.color.accent, L.headingCharSpace * s);
-        p.line(x0, y + h - 0.6 * s, x0 + W, y + h - 0.6 * s, L.color.rule, 0.2);
-      },
-    });
+  const cs = L.body.charSpace * s;
+  const heading = (label) => ({
+    kind: 'heading',
+    label,
+    h: L.headingGap * s,
+    before: L.sectionGap * s,
+    keep: true,
+    draw: (p, x, b) => p.text(label, x, b, 'bold', size, black, L.headingCharSpace * s),
+  });
+  const line = (text, font, before = 0, keep = false) => ({
+    h: pitch,
+    before,
+    keep,
+    draw: (p, x, b) => p.text(text, x, b, font, size, black, cs),
+  });
+  const paragraph = (text, font, before) => {
+    setFont(doc, font, size);
+    const lines = wrap(doc, text, width, cs);
+    return lines.map((ln, i) => line(ln, font, i === 0 ? before : 0, i < lines.length - 1));
   };
 
-  // Zutaten
-  const ingredients = parseIngredients(sanitize(recipe.ingredients || ''));
+  const left = [];
+  const ingredients = parseLines(sanitize(r.ingredients).replace(/\t/g, ' '));
   if (ingredients.length) {
-    heading(L.labels.ingredients);
-    const bodySize = sz('body');
-    const lh = lineH(bodySize);
-    setFont(doc, 'amount', bodySize);
-    const amountW = Math.min(
-      W * 0.3,
-      Math.max(0, ...ingredients.filter((i) => i.amount).map((i) => doc.getTextWidth(i.amount))),
-    );
-    const gap = amountW ? 2.5 * s : 0;
-
-    const measureItem = (item, colW) => {
-      if (item.group) {
-        setFont(doc, 'group', sz('group'));
-        return { lines: wrap(doc, item.group, colW), h: lineH(sz('group')) };
-      }
-      setFont(doc, 'body', bodySize);
-      return { lines: wrap(doc, item.name, colW - amountW - gap), h: lh };
-    };
-
-    const drawItem = (p, item, m, x, y) => {
-      if (item.group) {
-        m.lines.forEach((ln, i) => p.text(ln, x, y + m.h * (i + 0.78), 'group', sz('group'), L.color.text));
-        return;
-      }
-      if (item.amount) p.text(item.amount, x, y + lh * 0.78, 'amount', bodySize, L.color.text);
-      m.lines.forEach((ln, i) => p.text(ln, x + amountW + gap, y + lh * (i + 0.78), 'body', bodySize, L.color.text));
-    };
-
-    const colGap = 6 * s;
-    const halfW = (W - colGap) / 2;
-    let cols = L.ingredientColumns;
-    if (cols === 'auto') {
-      const fitsHalf = ingredients.every((i) => measureItem(i, halfW).lines.length === 1);
-      cols = ingredients.length >= 7 && fitsHalf ? 2 : 1;
-    }
-
-    if (cols === 2) {
-      // Spaltenweise füllen, Gruppenüberschriften nicht ans Spaltenende.
-      const measured = ingredients.map((i) => ({ item: i, m: measureItem(i, halfW) }));
-      const rowH = (e) => e.m.h * e.m.lines.length + (e.item.group ? 1 * s : 0);
-      const total = measured.reduce((a, e) => a + rowH(e), 0);
-      let split = 0;
-      let acc = 0;
-      while (split < measured.length && acc + rowH(measured[split]) / 2 < total / 2) acc += rowH(measured[split++]);
-      if (split > 0 && measured[split - 1].item.group) split--;
-      // Gibt es Gruppen ("Für den Teig:"), lieber an einer Gruppengrenze umbrechen.
-      const heightAt = (k) => measured.reduce((a, e, i) => a + (i < k ? rowH(e) : 0), 0);
-      const maxCol = (k) => Math.max(heightAt(k), total - heightAt(k));
-      const groupSplits = measured.map((e, i) => (e.item.group && i > 0 ? i : -1)).filter((i) => i > 0);
-      const bestGroup = groupSplits.sort((a, b) => maxCol(a) - maxCol(b))[0];
-      if (bestGroup && maxCol(bestGroup) <= maxCol(split) * 1.35) split = bestGroup;
-      const colsData = [measured.slice(0, split), measured.slice(split)];
-      const colH = colsData.map((c) => c.reduce((a, e) => a + rowH(e), 0));
-      units.push({
-        h: Math.max(...colH),
-        before: 2 * s,
-        draw(p, y) {
-          colsData.forEach((c, ci) => {
-            let yy = y;
-            for (const e of c) {
-              if (e.item.group && yy > y) yy += 1 * s;
-              drawItem(p, e.item, e.m, x0 + ci * (halfW + colGap), yy);
-              yy += e.m.h * e.m.lines.length;
-            }
-          });
-        },
-      });
-    } else {
-      ingredients.forEach((item, idx) => {
-        const m = measureItem(item, W);
-        units.push({
-          h: m.h * m.lines.length,
-          before: idx === 0 ? 2 * s : item.group ? 2.2 * s : 0.3 * s,
-          keep: !!item.group,
-          draw: (p, y) => drawItem(p, item, m, x0, y),
-        });
-      });
-    }
-  }
-
-  // Zubereitung
-  const steps = parseSteps(sanitize(recipe.steps || ''));
-  if (steps.length) {
-    heading(L.labels.steps);
-    const size = sz('body');
-    const lh = lineH(size);
-    const numbered = L.stepNumbers && steps.length > 1;
-    const gutter = numbered ? 6 * s : 0;
-    setFont(doc, 'body', size);
-    steps.forEach((step, si) => {
-      const lines = wrap(doc, step, W - gutter);
-      lines.forEach((ln, li) => {
-        units.push({
-          h: lh,
-          before: li === 0 ? (si === 0 ? 2 * s : 2.4 * s) : 0,
-          // Keine einzelne Zeile am Seitenende/-anfang (Schusterjunge/Hurenkind)
-          keep: lines.length > 1 && (li === 0 || li === lines.length - 2),
-          draw(p, y) {
-            if (li === 0 && numbered) p.text(String(si + 1), x0, y + lh * 0.78, 'amount', sz('stepNo'), L.color.accent);
-            p.text(ln, x0 + gutter, y + lh * 0.78, 'body', size, L.color.text);
-          },
-        });
-      });
+    left.push(heading(L.labels.ingredients));
+    ingredients.forEach((ing, i) => {
+      if (isGroup(ing)) {
+        const units = paragraph(ing.replace(/^#+\s*/, '').replace(/:$/, ''), 'bold', i ? L.groupGap * s : 0);
+        units[units.length - 1].keep = true;
+        left.push(...units);
+      } else left.push(...paragraph(ing, 'regular', 0));
     });
   }
-
-  // Tipps
-  const notes = parseSteps(sanitize(recipe.notes || ''));
+  const notes = parseLines(sanitize(r.notes));
   if (notes.length) {
-    heading(L.labels.notes);
-    const size = sz('note');
-    const lh = lineH(size);
-    setFont(doc, 'note', size);
-    notes.forEach((n, ni) => {
-      wrap(doc, n, W).forEach((ln, li) => {
-        units.push({
-          h: lh,
-          before: li === 0 ? (ni === 0 ? 2 * s : 1.6 * s) : 0,
-          draw: (p, y) => p.text(ln, x0, y + lh * 0.78, 'note', size, L.color.text),
-        });
-      });
+    left.push(heading(L.labels.notes));
+    notes.forEach((n, i) => left.push(...paragraph(n, 'regular', i ? L.paragraphGap * s : 0)));
+  }
+
+  const right = [];
+  const steps = parseLines(sanitize(r.steps));
+  if (steps.length) {
+    right.push(heading(L.labels.steps));
+    steps.forEach((st, i) => {
+      const units = paragraph(st, 'regular', i ? L.paragraphGap * s : 0);
+      // keine einzelne Zeile eines Absatzes am Spaltenende/-anfang
+      if (units.length > 2) units[units.length - 2].keep = true;
+      right.push(...units);
     });
   }
-
-  return units;
+  return { left, right, heading };
 }
 
-function titleBlock(doc, recipe, s) {
-  const L = LAYOUT;
-  const W = L.page.width - L.margin.left - L.margin.right;
-  const tSize = L.size.title * s;
-  setFont(doc, 'title', tSize);
-  const tLines = wrap(doc, sanitize(recipe.title || 'Ohne Titel'), W);
-  const tLh = tSize * 1.12 * PT;
-  const info = sanitize(recipe.info || '').trim();
-  const iSize = L.size.info * s;
-  let h = tLh * tLines.length;
-  if (info) h += 1.5 * s + lineH(iSize);
-  return {
-    h,
-    draw(p, y) {
-      tLines.forEach((ln, i) => p.text(ln, L.margin.left, y + tLh * (i + 0.8), 'title', tSize, L.color.text));
-      if (info) p.text(info, L.margin.left, y + tLh * tLines.length + 1.5 * s + lineH(iSize) * 0.78, 'info', iSize, L.color.muted);
-    },
-  };
-}
-
-export function layoutRecipe(doc, recipe, s = 1) {
-  const L = LAYOUT;
-  const units = buildUnits(doc, recipe, s);
-  const title = titleBlock(doc, recipe, s);
-  const bottom = L.page.height - L.margin.bottom - L.footerHeight;
-  const backTop = L.margin.top + lineH(L.size.info) + 4;
-
-  const pages = [{ items: [] }];
-  let y = L.margin.top + title.h + 3 * s;
-  let pageStart = true;
-  for (let i = 0; i < units.length; i++) {
+// Füllt Units ab Index `start` in eine Spalte. Liefert platzierte Zeilen und
+// den Index der ersten Zeile, die nicht mehr gepasst hat.
+function flow(units, start, top, bottom) {
+  const placed = [];
+  let b = top;
+  let i = start;
+  for (; i < units.length; i++) {
     const u = units[i];
-    let need = (pageStart ? 0 : u.before) + u.h;
-    for (let j = i; units[j].keep && j + 1 < units.length && j < i + 3; j++) need += units[j + 1].before + units[j + 1].h;
-    if (y + need > bottom + 0.01 && !pageStart) {
-      pages.push({ items: [] });
-      y = backTop;
-      pageStart = true;
-    }
-    if (!pageStart) y += u.before;
-    pages[pages.length - 1].items.push({ u, y });
-    y += u.h;
-    pageStart = false;
+    const first = placed.length === 0;
+    const base = first ? b : b + u.before;
+    let end = base;
+    for (let j = i; units[j].keep && j + 1 < units.length && j < i + 4; j++) end += units[j].h + units[j + 1].before;
+    if (end > bottom + 0.01 && !first) break;
+    placed.push({ u, b: base });
+    b = base + u.h;
   }
-  return { recipe, scale: s, title, pages };
+  return { placed, next: i };
 }
 
-// Wählt die Schriftgröße so, dass das Rezept auf eine Seite (oder notfalls
-// Vorder- + Rückseite) passt.
+function header(doc, r, s) {
+  const L = LAYOUT;
+  const W = L.right - L.left;
+  let title = sanitize(r.title || 'Ohne Titel');
+  if (L.title.uppercase) title = title.toUpperCase();
+  // Titel einzeilig halten, notfalls kleiner setzen
+  let tSize = L.title.size;
+  const tw = (sz) => {
+    setFont(doc, 'bold', sz);
+    return doc.getTextWidth(title) + L.title.charSpace * (sz / L.title.size) * (title.length - 1);
+  };
+  while (tSize > L.title.minSize && tw(tSize) > W) tSize -= 0.5;
+
+  setFont(doc, 'regular', L.description.size);
+  const desc = r.description ? wrap(doc, sanitize(r.description), W, L.body.charSpace).slice(0, L.description.maxLines) : [];
+  const dy = Math.max(0, desc.length - 1) * L.body.leading * PT;
+  return { title, tSize, desc, dy, meta: metaItems(r) };
+}
+
+export function layoutRecipe(doc, r, s = 1) {
+  const L = LAYOUT;
+  const head = header(doc, r, s);
+  const { left, right, heading } = buildStreams(doc, r, s);
+  const top = L.headingBaseline + head.dy;
+  const bottom = L.bottomBaseline;
+
+  const front = { columns: [flow(left, 0, top, bottom), flow(right, 0, top, bottom)] };
+  const pages = [front];
+
+  // Rest auf Rückseite(n): erst übrige Zutaten/Tipps, dann übrige Anleitung,
+  // jeweils mit "(FORTSETZUNG)"-Überschrift; links, dann rechts.
+  const rest = [];
+  const cont = (units, idx) => {
+    if (idx >= units.length) return;
+    let label = null;
+    for (let k = idx; k >= 0; k--) if (units[k].kind === 'heading') { label = units[k].label; break; }
+    if (units[idx].kind !== 'heading' && label) rest.push(heading(label + L.labels.cont));
+    rest.push(...units.slice(idx));
+  };
+  cont(left, front.columns[0].next);
+  cont(right, front.columns[1].next);
+
+  let idx = 0;
+  while (idx < rest.length && pages.length < 4) {
+    const top2 = L.headingBaseline;
+    const c1 = flow(rest, idx, top2, bottom);
+    const c2 = flow(rest, c1.next, top2, bottom);
+    pages.push({ columns: [c1, c2] });
+    idx = c2.next;
+  }
+  return { recipe: r, scale: s, head, pages, overflow: idx < rest.length };
+}
+
+// Wählt die Schriftgröße so, dass das Rezept auf die Vorderseite passt –
+// sonst Vorder- und Rückseite.
 export function fitRecipe(doc, recipe) {
   const at = (s) => layoutRecipe(doc, recipe, s);
   const full = at(1);
@@ -351,21 +311,21 @@ export function fitRecipe(doc, recipe) {
     const r = at(s);
     if (r.pages.length === 1) return r;
   }
-  if (full.pages.length === 2) return full;
-  for (const s of [0.95, 0.9, 0.85, 0.8, 0.75, 0.7]) {
+  if (full.pages.length === 2 && !full.overflow) return full;
+  for (const s of [0.95, 0.9, 0.85, 0.8, 0.75]) {
     const r = at(s);
-    if (r.pages.length <= 2) return r;
+    if (r.pages.length <= 2 && !r.overflow) return r;
   }
-  const r = at(0.7);
-  r.overflow = true;
+  const r = at(0.75);
+  r.overflow = r.overflow || r.pages.length > 2;
   return r;
 }
 
 // ---------------------------------------------------------------------------
 // Zeichnen
 
-// Ein "Painter" zeichnet in Kartenkoordinaten (mm, oben links = 0/0) und
-// verschiebt bzw. dreht (180°) die Karte auf dem Zielblatt.
+// Zeichnet in Kartenkoordinaten (mm) und verschiebt bzw. dreht (180°) die
+// Karte auf dem Zielblatt.
 function painter(doc, ox, oy, rotate) {
   const { width: W, height: H } = LAYOUT.page;
   const map = (x, y) => (rotate ? [ox + W - x, oy + H - y] : [ox + x, oy + y]);
@@ -380,9 +340,9 @@ function painter(doc, ox, oy, rotate) {
       if (charSpace) opt.charSpace = charSpace;
       doc.text(str, px, py, opt);
     },
-    textRight(str, xRight, y, font, size, color) {
+    width(str, font, size) {
       setFont(doc, font, size);
-      this.text(str, xRight - doc.getTextWidth(str), y, font, size, color);
+      return doc.getTextWidth(str);
     },
     line(x1, y1, x2, y2, color, width) {
       doc.setDrawColor(...color);
@@ -397,44 +357,46 @@ function painter(doc, ox, oy, rotate) {
 export function drawCardPage(doc, laid, pageIndex, ox = 0, oy = 0, rotate = false) {
   const L = LAYOUT;
   const p = painter(doc, ox, oy, rotate);
-  const page = laid.pages[pageIndex];
-  const total = laid.pages.length;
-  const right = L.page.width - L.margin.right;
+  const { head } = laid;
+  const back = pageIndex > 0;
+  const dy = back ? 0 : head.dy;
 
-  if (pageIndex === 0) {
-    laid.title.draw(p, L.margin.top);
-  } else {
-    const size = L.size.info;
-    p.text(
-      sanitize(`${laid.recipe.title || ''} – ${L.labels.backHeader}`),
-      L.margin.left,
-      L.margin.top + lineH(size) * 0.78,
-      'info',
-      size,
-      L.color.muted,
-    );
-    p.line(L.margin.left, L.margin.top + lineH(size) + 1.2, right, L.margin.top + lineH(size) + 1.2, L.color.rule, 0.2);
+  // Kopf
+  const cs = L.title.charSpace * (head.tSize / L.title.size);
+  p.text(head.title, L.left, L.title.baseline, 'bold', head.tSize, L.color.text, cs);
+  const lead = L.body.leading * PT;
+  if (back) p.text(L.labels.back, L.left, L.description.baseline, 'regular', L.description.size, L.color.muted);
+  else head.desc.forEach((d, i) => p.text(d, L.left, L.description.baseline + i * lead, 'regular', L.description.size, L.color.muted));
+  if (!back) {
+    let x = L.left;
+    head.meta.forEach((item, i) => {
+      x = Math.max(x, L.meta.slots[i] ?? x);
+      p.text(item, x, L.meta.baseline + dy, 'regular', L.meta.size, L.color.muted);
+      x += p.width(item, 'regular', L.meta.size) + L.meta.gap;
+    });
   }
+  p.line(L.left, L.rule.y + dy, L.right, L.rule.y + dy, L.color.text, L.rule.width);
+  p.line(L.divider.x, L.divider.top + dy, L.divider.x, L.divider.bottom + dy, L.color.text, L.divider.width);
 
-  for (const { u, y } of page.items) u.draw(p, y);
+  // Spalten
+  laid.pages[pageIndex].columns.forEach((col, ci) => {
+    for (const { u, b } of col.placed) u.draw(p, L.columns[ci].x, b);
+  });
 
-  // Fußzeile
-  const fy = L.page.height - L.margin.bottom;
-  const fSize = L.size.footer;
-  const tags = (laid.recipe.tags || []).join(' · ');
-  if (tags) p.text(sanitize(tags), L.margin.left, fy, 'footer', fSize, L.color.muted);
-  let tail = total > 1 ? `${pageIndex + 1}/${total}` : '';
-  if (pageIndex < total - 1) tail = `${L.labels.continued}  ${tail}`;
-  if (tail) p.textRight(tail, right, fy, 'footer', fSize, L.color.muted);
+  if (pageIndex < laid.pages.length - 1) {
+    const t = L.labels.continued;
+    p.text(t, L.right - p.width(t, 'regular', L.footer.size), L.footer.baseline, 'regular', L.footer.size, L.color.muted);
+  }
 }
 
 // ---------------------------------------------------------------------------
 // PDF-Ausgabe
 
 const MAGIC = 'rezeptkartei:v1:';
+export const FIELDS = ['title', 'description', 'totalTime', 'workTime', 'cookTime', 'servings', 'difficulty', 'ingredients', 'steps', 'notes', 'tags'];
 
 function embed(recipes) {
-  const data = recipes.map(({ id, title, info, ingredients, steps, notes, tags }) => ({ id, title, info, ingredients, steps, notes, tags }));
+  const data = recipes.map((r) => Object.fromEntries(FIELDS.map((k) => [k, r[k]])));
   const bytes = new TextEncoder().encode(JSON.stringify(data));
   let bin = '';
   bytes.forEach((b) => (bin += String.fromCharCode(b)));
@@ -451,12 +413,17 @@ export function readEmbedded(subject) {
   }
 }
 
-// Einzelne Karte als A5-PDF (für Vorschau, Teilen, Archiv)
+const cardFormat = () => {
+  const { width: W, height: H } = LAYOUT.page;
+  return { format: [W, H], orientation: W > H ? 'landscape' : 'portrait' };
+};
+
+// Einzelne Karte als PDF (Vorschau, Teilen, Archiv)
 export function cardPdf(recipe) {
-  const doc = newDoc({ format: [LAYOUT.page.width, LAYOUT.page.height] });
+  const doc = newDoc(cardFormat());
   const laid = fitRecipe(doc, recipe);
   laid.pages.forEach((_, i) => {
-    if (i > 0) doc.addPage([LAYOUT.page.width, LAYOUT.page.height], 'portrait');
+    if (i > 0) doc.addPage(cardFormat().format, cardFormat().orientation);
     drawCardPage(doc, laid, i);
   });
   doc.setProperties({ title: recipe.title || 'Rezept', subject: embed([recipe]), creator: 'Rezeptkartei' });
@@ -464,8 +431,7 @@ export function cardPdf(recipe) {
 }
 
 export function pageCount(recipe) {
-  const doc = newDoc({ format: [LAYOUT.page.width, LAYOUT.page.height] });
-  const laid = fitRecipe(doc, recipe);
+  const laid = fitRecipe(newDoc(cardFormat()), recipe);
   return { pages: laid.pages.length, scale: laid.scale, overflow: !!laid.overflow };
 }
 
@@ -487,49 +453,59 @@ export function planSheets(laidList) {
   return sheets;
 }
 
-// Druckbogen: DIN A4 quer, links und rechts je eine A5-Karte.
-// opts.swapBack: Rückseiten links/rechts tauschen (Wenden an der kurzen Kante)
-// opts.rotateBack: Rückseiten um 180° drehen (falls sie auf dem Kopf stehen)
-// opts.cutMarks: Schnittmarken in der Mitte
+function sheetDoc() {
+  return newDoc({ orientation: LAYOUT.sheet.orientation, format: LAYOUT.sheet.format });
+}
+
+function cutMarks(doc) {
+  // Kurze Striche am Rand, wo die beiden Karten aneinanderstoßen
+  const [, [sx, sy]] = LAYOUT.sheet.slots;
+  doc.setDrawColor(160);
+  doc.setLineWidth(0.15);
+  const W = doc.internal.pageSize.getWidth();
+  const H = doc.internal.pageSize.getHeight();
+  if (sy > 0) {
+    doc.line(0, sy, 5, sy);
+    doc.line(W - 5, sy, W, sy);
+  } else {
+    doc.line(sx, 0, sx, 5);
+    doc.line(sx, H - 5, sx, H);
+  }
+}
+
+// Druckbogen: DIN A4, zwei Karten.
+// opts.swapSlots: Rückseiten der beiden Karten tauschen
+// opts.rotateBack: Rückseiten um 180° drehen
+// opts.cutMarks: Schnittmarken
 // opts.sides: 'both' | 'front' | 'back'
 export function sheetsPdf(recipes, opts = {}) {
-  const { swapBack = true, rotateBack = false, cutMarks = true, sides = 'both' } = opts;
-  const doc = newDoc({ orientation: 'landscape', format: 'a4' });
+  const { swapSlots = false, rotateBack = false, cutMarks: marks = true, sides = 'both' } = opts;
+  const doc = sheetDoc();
+  const slots = LAYOUT.sheet.slots;
   const laidList = recipes.map((r) => fitRecipe(doc, r));
   const sheets = planSheets(laidList);
   const anyBack = sheets.some((sh) => sh.some((c) => c && c.back !== null));
-  const half = 297 / 2;
-  const offX = LAYOUT.page.width < half ? (half - LAYOUT.page.width) / 2 : 0;
   let first = true;
-
   const newPage = () => {
-    if (!first) doc.addPage('a4', 'landscape');
+    if (!first) doc.addPage(LAYOUT.sheet.format, LAYOUT.sheet.orientation);
     first = false;
-  };
-  const marks = () => {
-    if (!cutMarks) return;
-    doc.setDrawColor(160);
-    doc.setLineWidth(0.15);
-    doc.line(half, 0, half, 5);
-    doc.line(half, 205, half, 210);
   };
 
   sheets.forEach((sheet, si) => {
     const hasBack = sheet.some((c) => c && c.back !== null);
     if (sides !== 'back') {
       newPage();
-      sheet.forEach((c, slot) => c && drawCardPage(doc, c.laid, c.front, slot * half + offX, 0));
-      marks();
+      sheet.forEach((c, slot) => c && drawCardPage(doc, c.laid, c.front, ...slots[slot]));
+      if (marks) cutMarks(doc);
     }
     // Leere Rückseiten nur, damit beim Duplexdruck die folgenden Blätter stimmen.
     if (anyBack && sides !== 'front' && (hasBack || (sides === 'both' && si < sheets.length - 1))) {
       newPage();
       sheet.forEach((c, slot) => {
         if (!c || c.back === null) return;
-        const pos = swapBack ? 1 - slot : slot;
-        drawCardPage(doc, c.laid, c.back, pos * half + offX, 0, rotateBack);
+        drawCardPage(doc, c.laid, c.back, ...slots[swapSlots ? 1 - slot : slot], rotateBack);
       });
-      marks();
+      if (marks) cutMarks(doc);
     }
   });
   if (first) newPage();
@@ -539,20 +515,20 @@ export function sheetsPdf(recipes, opts = {}) {
 
 // Testbogen, um die Duplex-Einstellungen am eigenen Drucker zu prüfen.
 export function duplexTestPdf(opts = {}) {
-  const { swapBack = true, rotateBack = false } = opts;
-  const doc = newDoc({ orientation: 'landscape', format: 'a4' });
-  const half = 297 / 2;
+  const { swapSlots = false, rotateBack = false } = opts;
+  const doc = sheetDoc();
+  const slots = LAYOUT.sheet.slots;
   const card = (label, sub, slot, rotate) => {
-    const p = painter(doc, slot * half, 0, rotate);
-    p.text(label, 20, 40, 'title', 40, [30, 30, 30]);
-    p.text(sub, 20, 55, 'body', 12, [100, 100, 100]);
-    p.text('OBEN', 20, 20, 'heading', 10, [150, 110, 70], 1);
-    p.line(14, 14, 134, 14, [150, 110, 70], 0.5);
+    const p = painter(doc, ...slots[slot], rotate);
+    p.text('OBEN', 8, 12, 'bold', 10, [0, 0, 0], 1);
+    p.line(8, 14, 202, 14, [0, 0, 0], 0.4);
+    p.text(label, 8, 45, 'bold', 36, [0, 0, 0]);
+    p.text(sub, 8, 58, 'regular', 12, [100, 100, 100]);
   };
   card('Karte A', 'Vorderseite', 0, false);
   card('Karte B', 'Vorderseite', 1, false);
-  doc.addPage('a4', 'landscape');
-  card('Karte A', 'Rückseite – muss hinter "Karte A" stehen', swapBack ? 1 : 0, rotateBack);
-  card('Karte B', 'Rückseite – muss hinter "Karte B" stehen', swapBack ? 0 : 1, rotateBack);
+  doc.addPage(LAYOUT.sheet.format, LAYOUT.sheet.orientation);
+  card('Karte A', 'Rückseite – muss hinter „Karte A" liegen, OBEN oben', swapSlots ? 1 : 0, rotateBack);
+  card('Karte B', 'Rückseite – muss hinter „Karte B" liegen, OBEN oben', swapSlots ? 0 : 1, rotateBack);
   return doc;
 }
